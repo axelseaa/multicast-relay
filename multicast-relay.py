@@ -535,7 +535,11 @@ class PacketRelay():
                             self.removeConnection(s)
                             continue
                         finally:
-                            s.setblocking(0)
+                            try:
+                                if s.fileno() != -1:
+                                    s.setblocking(0)
+                            except OSError:
+                                pass
 
                         packet = self.aes.decrypt(packet)
 
