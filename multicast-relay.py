@@ -245,7 +245,7 @@ class PacketRelay():
 
             # Attempt reconnection at most once every N seconds
             if remote['connectFailure'] and remote['connectFailure'] > time.time()-self.remoteRetry:
-                return
+                continue
 
             remoteConnection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             remoteConnection.setblocking(0)
@@ -259,6 +259,7 @@ class PacketRelay():
                 else:
                     remote['connecting'] = False
                     remote['connectFailure'] = time.time()
+                    remoteConnection.close()
 
     def removeConnection(self, s):
         if s in self.remoteConnections:
@@ -521,24 +522,20 @@ class PacketRelay():
                         s.setblocking(1)
                         try:
                             (data, _) = s.recvfrom(2, socket.MSG_WAITALL)
-                        except socket.error as e:
-                            self.logger.info('REMOTE: Connection closed (%s)' % str(e))
-                            self.removeConnection(s)
-                            continue
+                            if not data:
+                                s.close()
+                                self.logger.info('REMOTE: Connection closed')
+                                self.removeConnection(s)
+                                continue
 
-                        if not data:
-                            s.close()
-                            self.logger.info('REMOTE: Connection closed')
-                            self.removeConnection(s)
-                            continue
-
-                        size = struct.unpack('!H', data)[0]
-                        try:
+                            size = struct.unpack('!H', data)[0]
                             (packet, _) = s.recvfrom(size, socket.MSG_WAITALL)
                         except socket.error as e:
                             self.logger.info('REMOTE: Connection closed (%s)' % str(e))
                             self.removeConnection(s)
                             continue
+                        finally:
+                            s.setblocking(0)
 
                         packet = self.aes.decrypt(packet)
 
@@ -549,7 +546,7 @@ class PacketRelay():
                         if magic != self.MAGIC:
                             self.logger.info('REMOTE: Garbage data received, closing connection.')
                             s.close()
-                            self.remoteConnection(s)
+                            self.removeConnection(s)
                             continue
 
                     else:
@@ -610,7 +607,7 @@ class PacketRelay():
                             if e.errno == errno.EAGAIN:
                                 pass
                             else:
-                                self.logger.info('REMOTE: Failed to connect to %s: %s' % (self.remoteAddr, str(e)))
+                                self.logger.info('REMOTE: Failed to connect to %s: %s' % (remote['addr'], str(e)))
                                 self.removeConnection(remoteConnection)
                                 continue
 
@@ -949,7 +946,7 @@ def main():
         print('Relay role should be either --listen or --remote (or neither) but not both')
         return 1
 
-    if args.ttl and (args.ttl < 0 or args.ttl > 255):
+    if args.ttl and (args.ttl < 1 or args.ttl > 255):
         print('Invalid TTL (must be between 1 and 255)')
         return 1
 
